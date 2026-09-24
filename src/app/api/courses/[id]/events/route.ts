@@ -19,15 +19,15 @@ const payloadSchema = z.object({
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  if (!getCourse(id)) {
+  if (!(await getCourse(id))) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
-  return NextResponse.json({ events: listEvents(id) });
+  return NextResponse.json({ events: await listEvents(id) });
 }
 
 export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
-  if (!getCourse(id)) {
+  if (!(await getCourse(id))) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
 
@@ -37,7 +37,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
 
-  const events = createEvents(
+  const events = await createEvents(
     parsed.data.events.map((event) => ({
       ...event,
       courseId: id,
@@ -45,7 +45,7 @@ export async function POST(request: Request, context: RouteContext) {
       confidence: 1,
     })),
   );
-  refreshCourseBounds(id);
+  await refreshCourseBounds(id);
 
   return NextResponse.json({ events }, { status: 201 });
 }

@@ -6,7 +6,7 @@ import { courseCreateSchema, firstIssue } from "@/lib/validate";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({ courses: listCourseSummaries() });
+  return NextResponse.json({ courses: await listCourseSummaries() });
 }
 
 export async function POST(request: Request) {
@@ -16,6 +16,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
 
-  const course = createCourse(parsed.data);
+  const course = await createCourse(parsed.data);
   return NextResponse.json({ course }, { status: 201 });
 }

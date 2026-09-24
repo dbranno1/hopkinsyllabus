@@ -7,9 +7,9 @@ import { listCourseSummaries, listEvents } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
-export default function CalendarPage() {
-  const courses = listCourseSummaries();
-  const events = listEvents();
+export default async function CalendarPage() {
+  const courses = await listCourseSummaries();
+  const events = await listEvents();
   const today = todayIso();
 
   if (courses.length === 0) {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { getDb, transaction } from "./db";
+import { query, run, transaction, type QueryFn } from "./db";
 import {
   COURSE_COLORS,
   EVENT_TYPES,
@@ -77,36 +77,33 @@ function eventSelect(): string {
 
 /* ---------------------------------- courses --------------------------------- */
 
-export function listCourses(): Course[] {
-  const rows = getDb()
-    .prepare(`${COURSE_SELECT} ORDER BY created_at ASC`)
-    .all() as unknown as CourseRow[];
+export async function listCourses(): Promise<Course[]> {
+  const rows = await query<CourseRow>(`${COURSE_SELECT} ORDER BY created_at ASC`);
   return rows.map(toCourse);
 }
 
-export function listCourseSummaries(): CourseSummary[] {
-  const courses = listCourses();
+export async function listCourseSummaries(): Promise<CourseSummary[]> {
+  const courses = await listCourses();
   if (courses.length === 0) return [];
 
   const today = new Date().toISOString().slice(0, 10);
-  const counts = getDb()
-    .prepare(`SELECT course_id, COUNT(*) AS total FROM events GROUP BY course_id`)
-    .all() as unknown as { course_id: string; total: number }[];
-  const countByCourse = new Map(counts.map((r) => [r.course_id, r.total]));
+  const counts = await query<{ course_id: string; total: number | string }>(
+    `SELECT course_id, COUNT(*) AS total FROM events GROUP BY course_id`,
+  );
+  const countByCourse = new Map(counts.map((r) => [r.course_id, Number(r.total)]));
 
-  const nextRows = getDb()
-    .prepare(
-      `SELECT course_id, id, title, type, due_date FROM events
-       WHERE due_date >= ?
-       ORDER BY due_date ASC, COALESCE(due_time, '99:99') ASC`,
-    )
-    .all(today) as unknown as {
+  const nextRows = await query<{
     course_id: string;
     id: string;
     title: string;
     type: string;
     due_date: string;
-  }[];
+  }>(
+      `SELECT course_id, id, title, type, due_date FROM events
+       WHERE due_date >= ?
+       ORDER BY due_date ASC, COALESCE(due_time, '99:99') ASC`,
+    [today],
+  );
 
   const nextByCourse = new Map<string, CourseSummary["nextEvent"]>();
   for (const row of nextRows) {
@@ -128,11 +125,9 @@ export function listCourseSummaries(): CourseSummary[] {
   }));
 }
 
-export function getCourse(id: string): Course | null {
-  const row = getDb()
-    .prepare(`${COURSE_SELECT} WHERE id = ?`)
-    .get(id) as unknown as CourseRow | undefined;
-  return row ? toCourse(row) : null;
+export async function getCourse(id: string): Promise<Course | null> {
+  const rows = await query<CourseRow>(`${COURSE_SELECT} WHERE id = ?`, [id]);
+  return rows[0] ? toCourse(rows[0]) : null;
 }
 
 export type CourseInput = {
@@ -146,17 +141,15 @@ export type CourseInput = {
   endDate?: string | null;
 };
 
-export function createCourse(input: CourseInput): Course {
+export async function createCourse(input: CourseInput): Promise<Course> {
   const id = input.id ?? randomUUID();
   const color =
     input.color ??
     COURSE_COLORS[Math.floor(Math.random() * COURSE_COLORS.length)];
-  getDb()
-    .prepare(
+  await run(
       `INSERT INTO courses (id, name, code, instructor, term, color, start_date, end_date, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       id,
       input.name,
       input.code ?? null,
@@ -166,15 +159,16 @@ export function createCourse(input: CourseInput): Course {
       input.startDate ?? null,
       input.endDate ?? null,
       new Date().toISOString(),
-    );
-  return getCourse(id)!;
+    ],
+  );
+  return (await getCourse(id))!;
 }
 
-export function updateCourse(
+export async function updateCourse(
   id: string,
   patch: Partial<CourseInput>,
-): Course | null {
-  const existing = getCourse(id);
+): Promise<Course | null> {
+  const existing = await getCourse(id);
   if (!existing) return null;
 
   const merged: Course = {
@@ -190,11 +184,9 @@ export function updateCourse(
     endDate: patch.endDate === undefined ? existing.endDate : patch.endDate,
   };
 
-  getDb()
-    .prepare(
+  await run(
       `UPDATE courses SET name = ?, code = ?, instructor = ?, term = ?, color = ?, start_date = ?, end_date = ? WHERE id = ?`,
-    )
-    .run(
+    [
       merged.name,
       merged.code,
       merged.instructor,
@@ -203,37 +195,31 @@ export function updateCourse(
       merged.startDate,
       merged.endDate,
       id,
-    );
+    ],
+  );
   return getCourse(id);
 }
 
-export function deleteCourse(id: string): boolean {
-  const result = getDb().prepare(`DELETE FROM courses WHERE id = ?`).run(id);
-  return Number(result.changes) > 0;
+export async function deleteCourse(id: string): Promise<boolean> {
+  return (await run(`DELETE FROM courses WHERE id = ?`, [id])) > 0;
 }
 
 /* ---------------------------------- events ---------------------------------- */
 
-export function listEvents(courseId?: string): CourseEvent[] {
-  const db = getDb();
+export async function listEvents(courseId?: string): Promise<CourseEvent[]> {
   const rows = courseId
-    ? (db
-        .prepare(`${eventSelect()} WHERE course_id = ? ${EVENT_ORDER}`)
-        .all(courseId) as unknown as EventRow[])
-    : (db
-        .prepare(`${eventSelect()} ${EVENT_ORDER}`)
-        .all() as unknown as EventRow[]);
+    ? await query<EventRow>(`${eventSelect()} WHERE course_id = ? ${EVENT_ORDER}`, [courseId])
+    : await query<EventRow>(`${eventSelect()} ${EVENT_ORDER}`);
   return rows.map(toEvent);
 }
 
-export function listEventsForCourses(courseIds: string[]): CourseEvent[] {
+export async function listEventsForCourses(courseIds: string[]): Promise<CourseEvent[]> {
   if (courseIds.length === 0) return [];
   const placeholders = courseIds.map(() => "?").join(", ");
-  const rows = getDb()
-    .prepare(
-      `${eventSelect()} WHERE course_id IN (${placeholders}) ${EVENT_ORDER}`,
-    )
-    .all(...courseIds) as unknown as EventRow[];
+  const rows = await query<EventRow>(
+    `${eventSelect()} WHERE course_id IN (${placeholders}) ${EVENT_ORDER}`,
+    courseIds,
+  );
   return rows.map(toEvent);
 }
 
@@ -248,14 +234,12 @@ export type EventInput = {
   source?: "parsed" | "manual";
 };
 
-export function createEvent(input: EventInput): CourseEvent {
+async function insertEvent(execute: QueryFn, input: EventInput): Promise<string> {
   const id = randomUUID();
-  getDb()
-    .prepare(
+  await execute(
       `INSERT INTO events (id, course_id, title, type, due_date, due_time, notes, confidence, source, completed, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-    )
-    .run(
+    [
       id,
       input.courseId,
       input.title,
@@ -266,23 +250,30 @@ export function createEvent(input: EventInput): CourseEvent {
       input.confidence ?? 1,
       input.source ?? "manual",
       new Date().toISOString(),
-    );
-  return getEvent(id)!;
+    ],
+  );
+  return id;
 }
 
-export function createEvents(inputs: EventInput[]): CourseEvent[] {
+export async function createEvent(input: EventInput): Promise<CourseEvent> {
+  const id = await transaction((execute) => insertEvent(execute, input));
+  return (await getEvent(id))!;
+}
+
+export async function createEvents(inputs: EventInput[]): Promise<CourseEvent[]> {
   if (inputs.length === 0) return [];
-  return transaction(() => inputs.map(createEvent));
+  const ids = await transaction((execute) =>
+    Promise.all(inputs.map((input) => insertEvent(execute, input))),
+  );
+  return Promise.all(ids.map(async (id) => (await getEvent(id))!));
 }
 
-export function getEvent(id: string): CourseEvent | null {
-  const row = getDb()
-    .prepare(`${eventSelect()} WHERE id = ?`)
-    .get(id) as unknown as EventRow | undefined;
-  return row ? toEvent(row) : null;
+export async function getEvent(id: string): Promise<CourseEvent | null> {
+  const rows = await query<EventRow>(`${eventSelect()} WHERE id = ?`, [id]);
+  return rows[0] ? toEvent(rows[0]) : null;
 }
 
-export function updateEvent(
+export async function updateEvent(
   id: string,
   patch: {
     title?: string;
@@ -292,8 +283,8 @@ export function updateEvent(
     notes?: string | null;
     completed?: boolean;
   },
-): CourseEvent | null {
-  const existing = getEvent(id);
+): Promise<CourseEvent | null> {
+  const existing = await getEvent(id);
   if (!existing) return null;
 
   const merged = {
@@ -305,11 +296,9 @@ export function updateEvent(
     completed: patch.completed ?? existing.completed,
   };
 
-  getDb()
-    .prepare(
+  await run(
       `UPDATE events SET title = ?, type = ?, due_date = ?, due_time = ?, notes = ?, completed = ? WHERE id = ?`,
-    )
-    .run(
+    [
       merged.title,
       merged.type,
       merged.dueDate,
@@ -317,13 +306,13 @@ export function updateEvent(
       merged.notes,
       merged.completed ? 1 : 0,
       id,
-    );
+    ],
+  );
   return getEvent(id);
 }
 
-export function deleteEvent(id: string): boolean {
-  const result = getDb().prepare(`DELETE FROM events WHERE id = ?`).run(id);
-  return Number(result.changes) > 0;
+export async function deleteEvent(id: string): Promise<boolean> {
+  return (await run(`DELETE FROM events WHERE id = ?`, [id])) > 0;
 }
 
 /* ------------------------------- syllabus files ------------------------------ */
@@ -337,21 +326,19 @@ export type SyllabusFile = {
   uploadedAt: string;
 };
 
-export function saveSyllabusFile(input: {
+export async function saveSyllabusFile(input: {
   courseId: string;
   filename: string;
   fileType: string;
   sizeBytes: number;
   text: string;
-}): SyllabusFile {
+}): Promise<SyllabusFile> {
   const id = randomUUID();
   const uploadedAt = new Date().toISOString();
-  getDb()
-    .prepare(
+  await run(
       `INSERT INTO syllabus_files (id, course_id, filename, file_type, size_bytes, text, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       id,
       input.courseId,
       input.filename,
@@ -359,24 +346,24 @@ export function saveSyllabusFile(input: {
       input.sizeBytes,
       input.text,
       uploadedAt,
-    );
+    ],
+  );
   return { id, uploadedAt, ...input };
 }
 
-export function listSyllabusFiles(courseId: string): SyllabusFile[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT id, course_id, filename, file_type, size_bytes, uploaded_at
-       FROM syllabus_files WHERE course_id = ? ORDER BY uploaded_at DESC`,
-    )
-    .all(courseId) as unknown as {
+export async function listSyllabusFiles(courseId: string): Promise<SyllabusFile[]> {
+  const rows = await query<{
     id: string;
     course_id: string;
     filename: string;
     file_type: string;
     size_bytes: number;
     uploaded_at: string;
-  }[];
+  }>(
+      `SELECT id, course_id, filename, file_type, size_bytes, uploaded_at
+       FROM syllabus_files WHERE course_id = ? ORDER BY uploaded_at DESC`,
+    [courseId],
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -389,22 +376,21 @@ export function listSyllabusFiles(courseId: string): SyllabusFile[] {
 }
 
 /** Widens the course term window so `Week N` dates and year inference stay sane. */
-export function refreshCourseBounds(courseId: string): void {
-  const row = getDb()
-    .prepare(
+export async function refreshCourseBounds(courseId: string): Promise<void> {
+  const rows = await query<{ first: string | null; last: string | null }>(
       `SELECT MIN(due_date) AS first, MAX(due_date) AS last FROM events WHERE course_id = ?`,
-    )
-    .get(courseId) as unknown as { first: string | null; last: string | null };
+    [courseId],
+  );
+  const row = rows[0];
   if (!row?.first || !row?.last) return;
 
-  getDb()
-    .prepare(
+  await run(
       `UPDATE courses
        SET start_date = COALESCE(start_date, ?),
            end_date   = COALESCE(end_date, ?)
        WHERE id = ?`,
-    )
-    .run(row.first, row.last, courseId);
+    [row.first, row.last, courseId],
+  );
 }
 
 /* ------------------------------ pending uploads ------------------------------ */
@@ -413,44 +399,45 @@ export function refreshCourseBounds(courseId: string): void {
  * Uploads are parsed before the user confirms them, so the extracted text is
  * parked here until the review step is accepted (or the entry expires).
  */
-export function savePendingUpload(input: {
+export async function savePendingUpload(input: {
   id: string;
   filename: string;
   fileType: string;
   sizeBytes: number;
   text: string;
-}): void {
-  getDb()
-    .prepare(
+}): Promise<void> {
+  await run(
       `INSERT INTO pending_uploads (id, filename, file_type, size_bytes, text, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       input.id,
       input.filename,
       input.fileType,
       input.sizeBytes,
       input.text,
       new Date().toISOString(),
-    );
+    ],
+  );
 }
 
-export function takePendingUpload(id: string): {
+export async function takePendingUpload(id: string): Promise<{
   filename: string;
   fileType: string;
   sizeBytes: number;
   text: string;
-} | null {
-  const db = getDb();
-  const row = db
-    .prepare(
+} | null> {
+  const rows = await query<{
+    filename: string;
+    file_type: string;
+    size_bytes: number;
+    text: string;
+  }>(
       `SELECT filename, file_type, size_bytes, text FROM pending_uploads WHERE id = ?`,
-    )
-    .get(id) as unknown as
-    | { filename: string; file_type: string; size_bytes: number; text: string }
-    | undefined;
+    [id],
+  );
+  const row = rows[0];
   if (!row) return null;
-  db.prepare(`DELETE FROM pending_uploads WHERE id = ?`).run(id);
+  await run(`DELETE FROM pending_uploads WHERE id = ?`, [id]);
   return {
     filename: row.filename,
     fileType: row.file_type,
@@ -459,7 +446,8 @@ export function takePendingUpload(id: string): {
   };
 }
 
-export function prunePendingUploads(olderThanHours = 24): void {
+export async function prunePendingUploads(olderThanHours = 24): Promise<void> {
   const cutoff = new Date(Date.now() - olderThanHours * 3600_000).toISOString();
-  getDb().prepare(`DELETE FROM pending_uploads WHERE created_at < ?`).run(cutoff);
+  await run(`DELETE FROM pending_uploads WHERE created_at < ?`, [cutoff]);
 }
+

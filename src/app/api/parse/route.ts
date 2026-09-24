@@ -61,9 +61,9 @@ export async function POST(request: Request) {
       anchorStart,
     });
 
-    prunePendingUploads();
+    await prunePendingUploads();
     const uploadId = randomUUID();
-    savePendingUpload({
+    await savePendingUpload({
       id: uploadId,
       filename: file.name,
       fileType: document.fileType,

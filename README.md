@@ -30,7 +30,7 @@ and builds a colour-coded calendar you can review, edit and export.
 | Framework | [Next.js 16](https://nextjs.org) (App Router) | One codebase for UI and server-side parsing/API routes; easy to deploy |
 | Language | TypeScript (strict) | Safer refactors across the parser, API and UI |
 | Styling | Tailwind CSS v4 | Fast, consistent design system with no runtime CSS |
-| Database | `node:sqlite` (built into Node) | Zero native dependencies, real SQL, single-file storage |
+| Database | Vercel Postgres or `node:sqlite` | Durable production storage with a zero-setup local fallback |
 | Validation | Zod | One schema for every API payload |
 | Parsing | `unpdf`, `mammoth` | Battle-tested text extraction, loaded only when a file is uploaded |
 
@@ -55,17 +55,23 @@ npm run lint       # eslint
 
 ## Deploying to Vercel
 
-This repository includes a Vercel configuration and requires Node 24 because the
-database uses the built-in `node:sqlite` module. Import the repository into Vercel
-and deploy with the default settings; the project configuration runs `npm ci` and
-`npm run build`.
+Import the repository into Vercel and add a Vercel Postgres or Neon integration.
+The integration normally provides `POSTGRES_URL`; Neon integrations may instead
+provide `DATABASE_URL`. Both forms are supported. The app creates the `courses`,
+`events`, `syllabus_files` and `pending_uploads` tables and their indexes
+automatically on first use.
 
-The current SQLite database is local and file-backed. On Vercel it uses the
-writable `/tmp` directory so the app can start, but Vercel storage is ephemeral:
-courses and uploaded syllabi are not durable across deployments or instances. Use
-this deployment for a review/demo environment only until `src/lib/db.ts` is
-replaced with a hosted database adapter. The app also has no authentication, so do
-not use a public deployment for private syllabus data.
+Required Vercel environment variables:
+
+- `POSTGRES_URL` — the pooled connection string from Vercel Postgres.
+- `POSTGRES_URL_NON_POOLING` — optional direct connection string fallback.
+- `DATABASE_URL` or `DATABASE_URL_UNPOOLED` — accepted Neon equivalents.
+
+Set the variables for every Vercel environment that should share the database
+(Preview and Production as appropriate), then redeploy. Without either variable,
+the app refuses to use ephemeral SQLite on Vercel instead of appearing to lose
+courses between requests. The app has no authentication, so do not use a public
+deployment for private syllabus data.
 
 ## How the parser works
 
@@ -115,9 +121,11 @@ src/
 
 ## Data
 
-Courses, deadlines and the text of uploaded syllabi are stored in
+Locally, courses, deadlines and the text of uploaded syllabi are stored in
 `.data/hopsyllabus.db` (git-ignored). Change the location with the
-`HOPSYLLABUS_DATA_DIR` environment variable. Deleting that file resets the app.
+`HOPSYLLABUS_DATA_DIR` environment variable. When Postgres is configured, these
+records are stored in the hosted database instead; deleting the local file then
+has no effect on the hosted data.
 
 ## Limitations
 

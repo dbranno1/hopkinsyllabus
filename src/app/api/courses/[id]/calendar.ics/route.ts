@@ -10,12 +10,12 @@ type RouteContext = { params: Promise<{ id: string }> };
 /** Downloads the course deadlines as an `.ics` feed for any calendar app. */
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const course = getCourse(id);
+  const course = await getCourse(id);
   if (!course) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
 
-  const calendar = buildCalendar(course, listEvents(id));
+  const calendar = buildCalendar(course, await listEvents(id));
   const slug = (course.code ?? course.name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

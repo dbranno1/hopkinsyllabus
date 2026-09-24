@@ -21,7 +21,6 @@ type RouteContext = { params: Promise<{ id: string }> };
 /** Commits the reviewed deadlines from an upload onto a course. */
 export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
-
   const body = await request.json().catch(() => null);
   const parsed = importSchema.safeParse(body);
   if (!parsed.success) {
@@ -29,8 +28,8 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { uploadId, events, course: coursePatch } = parsed.data;
-  if (!getCourse(id)) {
-    createCourse({
+  if (!(await getCourse(id))) {
+    await createCourse({
       id,
       name: coursePatch?.name?.trim() || "New course",
       code: coursePatch?.code,
@@ -42,7 +41,7 @@ export async function POST(request: Request, context: RouteContext) {
     });
   }
 
-  const existing = listEvents(id);
+  const existing = await listEvents(id);
   const seen = new Set(
     existing.map(
       (event) =>
@@ -50,7 +49,7 @@ export async function POST(request: Request, context: RouteContext) {
     ),
   );
 
-  const pending = uploadId ? takePendingUpload(uploadId) : null;
+  const pending = uploadId ? await takePendingUpload(uploadId) : null;
 
   const fresh = events.filter((event) => {
     const key = `${event.dueDate}|${event.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
@@ -59,7 +58,7 @@ export async function POST(request: Request, context: RouteContext) {
     return true;
   });
 
-  const created = createEvents(
+  const created = await createEvents(
     fresh.map((event) => ({
       courseId: id,
       title: event.title,
@@ -73,7 +72,7 @@ export async function POST(request: Request, context: RouteContext) {
   );
 
   if (pending) {
-    saveSyllabusFile({
+    await saveSyllabusFile({
       courseId: id,
       filename: pending.filename,
       fileType: pending.fileType,
@@ -83,27 +82,28 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (coursePatch && Object.keys(coursePatch).length > 0) {
-    updateCourse(id, coursePatch);
+    await updateCourse(id, coursePatch);
   }
 
-  refreshCourseBounds(id);
+  await refreshCourseBounds(id);
 
   const response = NextResponse.json({
     created: created.length,
     skipped: events.length - fresh.length,
-    course: getCourse(id),
+    course: await getCourse(id),
   });
-  const course = getCourse(id);
-  if (course) {
+  const currentCourse = await getCourse(id);
+  const currentEvents = await listEvents(id);
+  if (currentCourse) {
     response.cookies.set(
       COURSE_SNAPSHOT_COOKIE,
-      encodeCourseSnapshot({ course, events: listEvents(id).slice(0, 12) }),
+      encodeCourseSnapshot({ course: currentCourse, events: currentEvents }),
       {
-      httpOnly: true,
-      maxAge: 60 * 15,
-      path: "/",
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+        httpOnly: true,
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+        path: "/",
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
       },
     );
   }

@@ -15,14 +15,14 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const course = getCourse(id);
+  const course = await getCourse(id);
   if (!course) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
   return NextResponse.json({
     course,
-    events: listEvents(id),
-    syllabi: listSyllabusFiles(id),
+    events: await listEvents(id),
+    syllabi: await listSyllabusFiles(id),
   });
 }
 
@@ -34,7 +34,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: firstIssue(parsed.error) }, { status: 400 });
   }
 
-  const course = updateCourse(id, parsed.data);
+  const course = await updateCourse(id, parsed.data);
   if (!course) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
@@ -43,7 +43,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  if (!deleteCourse(id)) {
+  if (!(await deleteCourse(id))) {
     return NextResponse.json({ error: "Course not found." }, { status: 404 });
   }
   return NextResponse.json({ ok: true });

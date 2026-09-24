@@ -42,9 +42,9 @@ function StatCard({
   );
 }
 
-export default function DashboardPage() {
-  const courses = listCourseSummaries();
-  const events = listEvents();
+export default async function DashboardPage() {
+  const courses = await listCourseSummaries();
+  const events = await listEvents();
   const today = todayIso();
 
   if (courses.length === 0) {
